@@ -19,7 +19,25 @@ DEFAULT_HIGHLIGHTED = [
     "45242", "45244", "45245", "45247", "45248", "45251", "45255"
 ]
 
-st.sidebar.header("ZIP Controls")
+MAP_STYLES = {
+    "Clean Light": "CartoDB Positron",
+    "Standard Map": "OpenStreetMap",
+    "Dark Map": "CartoDB dark_matter"
+}
+
+st.title("Cincinnati ZIP Highlight Map")
+st.caption("Choose which ZIP codes to highlight in Hamilton County / Cincinnati.")
+
+# -----------------------------
+# SIDEBAR
+# -----------------------------
+st.sidebar.header("Map Controls")
+
+map_style_name = st.sidebar.selectbox(
+    "Map Style",
+    options=list(MAP_STYLES.keys()),
+    index=0
+)
 
 highlighted = st.sidebar.multiselect(
     "Highlighted ZIPs",
@@ -28,11 +46,20 @@ highlighted = st.sidebar.multiselect(
 )
 
 highlight_color = st.sidebar.color_picker("Highlight Color", "#D9EF6B")
+show_labels = st.sidebar.checkbox("Show ZIP labels", value=True)
 
-st.title("Cincinnati ZIP Highlight Map")
+st.sidebar.markdown("---")
+st.sidebar.metric("Highlighted ZIP count", len(highlighted))
 
+if highlighted:
+    st.sidebar.write("Selected ZIPs:")
+    st.sidebar.write(", ".join(highlighted))
+
+# -----------------------------
+# LOAD ZIP BOUNDARIES
+# -----------------------------
 URL = "https://raw.githubusercontent.com/OpenDataDE/State-zip-code-GeoJSON/master/oh_ohio_zip_codes_geo.min.json"
-geo = requests.get(URL).json()
+geo = requests.get(URL, timeout=30).json()
 
 features = []
 for f in geo["features"]:
@@ -46,10 +73,13 @@ filtered_geo = {
     "features": features
 }
 
+# -----------------------------
+# BUILD MAP
+# -----------------------------
 m = folium.Map(
     location=[39.1031, -84.5120],
     zoom_start=10,
-    tiles="CartoDB Positron"
+    tiles=MAP_STYLES[map_style_name]
 )
 
 def style(feature):
@@ -58,33 +88,111 @@ def style(feature):
     if z in highlighted:
         return {
             "fillColor": highlight_color,
-            "color": "#000000",
-            "weight": 2.5,
-            "fillOpacity": 0.6
+            "color": "#111111",
+            "weight": 1.6,
+            "fillOpacity": 0.58
         }
     else:
         return {
             "fillColor": "#000000",
-            "color": "#8A8A8A",
-            "weight": 1,
+            "color": "#8F8F8F",
+            "weight": 0.9,
             "fillOpacity": 0
         }
 
-highlight_function = lambda feature: {
-    "color": "#000000",
-    "weight": 3,
-    "fillOpacity": 0.75
-}
+def highlight_function(feature):
+    z = feature["properties"]["ZIP_DISPLAY"]
 
-folium.GeoJson(
+    if z in highlighted:
+        return {
+            "color": "#000000",
+            "weight": 2.2,
+            "fillOpacity": 0.68
+        }
+    else:
+        return {
+            "color": "#444444",
+            "weight": 1.6,
+            "fillOpacity": 0.08
+        }
+
+tooltip = None
+if show_labels:
+    tooltip = folium.GeoJsonTooltip(
+        fields=["ZIP_DISPLAY"],
+        aliases=["ZIP:"],
+        sticky=False,
+        labels=True
+    )
+
+geojson_layer = folium.GeoJson(
     filtered_geo,
     style_function=style,
     highlight_function=highlight_function,
-    tooltip=folium.GeoJsonTooltip(
-        fields=["ZIP_DISPLAY"],
-        aliases=["ZIP:"],
-        sticky=False
-    )
-).add_to(m)
+    tooltip=tooltip,
+    name="ZIP Codes"
+)
+geojson_layer.add_to(m)
 
-st_folium(m, width=1300, height=750)
+# Fit map to ZIP bounds
+try:
+    bounds = geojson_layer.get_bounds()
+    if bounds:
+        m.fit_bounds(bounds, padding=(10, 10))
+except Exception:
+    pass
+
+# -----------------------------
+# LEGEND
+# -----------------------------
+legend_html = f"""
+<div style="
+    position: fixed;
+    bottom: 35px;
+    left: 35px;
+    width: 220px;
+    background-color: rgba(255,255,255,0.92);
+    border: 1px solid #CFCFCF;
+    border-radius: 10px;
+    z-index: 9999;
+    font-size: 14px;
+    color: #222;
+    padding: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+">
+    <b>Cincinnati ZIP Map</b><br><br>
+    <span style="
+        display:inline-block;
+        width:14px;
+        height:14px;
+        background:{highlight_color};
+        border:1.5px solid #111111;
+        margin-right:8px;
+        vertical-align:middle;
+    "></span> Highlighted ZIPs<br><br>
+    <span style="
+        display:inline-block;
+        width:14px;
+        height:14px;
+        background:transparent;
+        border:1px solid #8F8F8F;
+        margin-right:8px;
+        vertical-align:middle;
+    "></span> Other ZIPs
+</div>
+"""
+m.get_root().html.add_child(folium.Element(legend_html))
+
+# -----------------------------
+# DISPLAY MAP
+# -----------------------------
+st_folium(m, width=1400, height=800)
+
+# -----------------------------
+# BOTTOM SUMMARY
+# -----------------------------
+st.markdown("### Highlighted ZIPs")
+if highlighted:
+    st.write(", ".join(highlighted))
+else:
+    st.write("No ZIPs selected.")
