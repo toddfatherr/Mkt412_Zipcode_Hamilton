@@ -3,6 +3,7 @@ import folium
 import requests
 import pandas as pd
 from streamlit_folium import st_folium
+from branca.element import Template, MacroElement
 
 st.set_page_config(page_title="Cincinnati ZIP Market Map", layout="wide")
 
@@ -80,7 +81,6 @@ def load_demographics(csv_file):
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}")
 
-    # forward fill the 3-row-per-zip structure
     df["Zip"] = df["Zip"].replace("", pd.NA).ffill()
     df["Income"] = df["Income"].replace("", pd.NA).ffill()
     df["% bachelors degree"] = df["% bachelors degree"].replace("", pd.NA).ffill()
@@ -103,7 +103,6 @@ def load_demographics(csv_file):
     for col in AGE_BINS + [c for c in extra_numeric if c in df.columns]:
         df[col] = df[col].apply(clean_numeric)
 
-    # ZIP-level attributes
     zip_level = (
         df.groupby("Zip", as_index=False)[["Income", "% bachelors degree", "Families"]]
         .max()
@@ -114,7 +113,6 @@ def load_demographics(csv_file):
         })
     )
 
-    # gender x age
     gender_rows = df[df["Gender"].isin(["Male", "Female"])].copy()
     melted = gender_rows.melt(
         id_vars=["Zip", "Gender"],
@@ -122,6 +120,7 @@ def load_demographics(csv_file):
         var_name="age_bin",
         value_name="count"
     )
+
     melted["col_name"] = (
         melted["Gender"].str.lower()
         + "_"
@@ -178,6 +177,27 @@ def classify_row(row, enabled_criteria):
         return "Partial Fit", met
     else:
         return "Low Fit", met
+
+def add_leaflet_control(map_obj, html_content, position="topright"):
+    template = f"""
+    {{% macro script(this, kwargs) %}}
+    var control = L.control({{position: '{position}'}});
+
+    control.onAdd = function(map) {{
+        var div = L.DomUtil.create('div', 'leaflet-bar leaflet-control');
+        div.innerHTML = `{html_content}`;
+        div.style.background = 'transparent';
+        div.style.border = 'none';
+        div.style.boxShadow = 'none';
+        return div;
+    }};
+
+    control.addTo({{{{this._parent.get_name()}}}});
+    {{% endmacro %}}
+    """
+    macro = MacroElement()
+    macro._template = Template(template)
+    map_obj.get_root().add_child(macro)
 
 # ---------------------------------------------------
 # TITLE
@@ -392,9 +412,9 @@ def manual_highlight(feature):
         }
     return {
         "color": "#555555",
-        "weight": 1.2,
-        "fillOpacity": 0.05
-    }
+            "weight": 1.2,
+            "fillOpacity": 0.05
+        }
 
 def data_style(feature):
     z = feature["properties"]["ZIP_DISPLAY"]
@@ -498,91 +518,136 @@ except Exception:
     pass
 
 # ---------------------------------------------------
-# LEGEND
+# LEGEND / MAP BOXES
 # ---------------------------------------------------
 if view_mode == "Manual Highlight Mode":
-    legend_html = f"""
+    legend_box = f"""
     <div style="
-        position: fixed;
-        bottom: 35px;
-        left: 35px;
-        width: 240px;
-        background-color: rgba(255,255,255,0.92);
-        border: 1px solid #CFCFCF;
-        border-radius: 10px;
-        z-index: 9999;
-        font-size: 14px;
-        color: #222;
-        padding: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    ">
-        <b>Cincinnati ZIP Map</b><br><br>
-        <span style="
-            display:inline-block;width:14px;height:14px;background:{manual_color};
-            border:1.2px solid #111111;margin-right:8px;vertical-align:middle;
-        "></span> Target Market ZIPs<br><br>
-        <span style="
-            display:inline-block;width:14px;height:14px;background:transparent;
-            border:1px solid #9A9A9A;margin-right:8px;vertical-align:middle;
-        "></span> Other ZIPs
-    </div>
-    """
-else:
-    legend_html = f"""
-    <div style="
-        position: fixed;
-        bottom: 35px;
-        left: 35px;
-        width: 280px;
         background-color: rgba(255,255,255,0.94);
         border: 1px solid #CFCFCF;
         border-radius: 10px;
-        z-index: 9999;
-        font-size: 14px;
-        color: #222;
         padding: 12px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        font-size: 14px;
+        color: #222;
+        line-height: 1.6;
+        min-width: 220px;
+    ">
+        <b>Cincinnati ZIP Map</b><br><br>
+        <span style="
+            display:inline-block;
+            width:14px;
+            height:14px;
+            background:{manual_color};
+            border:1.2px solid #111111;
+            margin-right:8px;
+            vertical-align:middle;
+        "></span> Target Market ZIPs<br><br>
+        <span style="
+            display:inline-block;
+            width:14px;
+            height:14px;
+            background:transparent;
+            border:1px solid #9A9A9A;
+            margin-right:8px;
+            vertical-align:middle;
+        "></span> Other ZIPs
+    </div>
+    """
+    add_leaflet_control(m, legend_box, position="bottomleft")
+
+else:
+    legend_box = f"""
+    <div style="
+        background-color: rgba(255,255,255,0.94);
+        border: 1px solid #CFCFCF;
+        border-radius: 10px;
+        padding: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        font-size: 14px;
+        color: #222;
+        line-height: 1.6;
+        min-width: 250px;
     ">
         <b>Data-Driven Target Market</b><br><br>
 
-        <span style="display:inline-block;width:14px;height:14px;background:{CLASS_COLORS['Primary Target']};
-        border:1.2px solid #111111;margin-right:8px;vertical-align:middle;"></span>
-        Primary Target<br><br>
+        <span style="
+            display:inline-block;
+            width:14px;
+            height:14px;
+            background:{CLASS_COLORS['Primary Target']};
+            border:1.2px solid #111111;
+            margin-right:8px;
+            vertical-align:middle;
+        "></span> Primary Target<br><br>
 
-        <span style="display:inline-block;width:14px;height:14px;background:{CLASS_COLORS['Secondary Opportunity']};
-        border:1.2px solid #111111;margin-right:8px;vertical-align:middle;"></span>
-        Secondary Opportunity<br><br>
+        <span style="
+            display:inline-block;
+            width:14px;
+            height:14px;
+            background:{CLASS_COLORS['Secondary Opportunity']};
+            border:1.2px solid #111111;
+            margin-right:8px;
+            vertical-align:middle;
+        "></span> Secondary Opportunity<br><br>
 
-        <span style="display:inline-block;width:14px;height:14px;background:{CLASS_COLORS['Partial Fit']};
-        border:1px solid #888888;margin-right:8px;vertical-align:middle;"></span>
-        Partial Fit<br><br>
+        <span style="
+            display:inline-block;
+            width:14px;
+            height:14px;
+            background:{CLASS_COLORS['Partial Fit']};
+            border:1px solid #888888;
+            margin-right:8px;
+            vertical-align:middle;
+        "></span> Partial Fit<br><br>
 
-        <span style="display:inline-block;width:14px;height:14px;background:{CLASS_COLORS['Low Fit']};
-        border:1px solid #BBBBBB;margin-right:8px;vertical-align:middle;"></span>
-        Low Fit
+        <span style="
+            display:inline-block;
+            width:14px;
+            height:14px;
+            background:{CLASS_COLORS['Low Fit']};
+            border:1px solid #BBBBBB;
+            margin-right:8px;
+            vertical-align:middle;
+        "></span> Low Fit
     </div>
     """
+    add_leaflet_control(m, legend_box, position="bottomleft")
 
-m.get_root().html.add_child(folium.Element(legend_html))
+    total_market = int(df_demo["target_demo_count"].sum())
+    primary_total = int(
+        df_demo.loc[df_demo["market_class"] == "Primary Target", "target_demo_count"].sum()
+    )
+    secondary_total = int(
+        df_demo.loc[df_demo["market_class"] == "Secondary Opportunity", "target_demo_count"].sum()
+    )
 
-test_html = """
-<div style="
-    position: absolute;
-    top: 70px;
-    right: 10px;
-    width: 220px;
-    background: red;
-    color: white;
-    z-index: 9999;
-    padding: 14px;
-    font-weight: bold;
-    border-radius: 8px;
-">
-    TEST BOX
-</div>
-"""
-m.get_root().html.add_child(folium.Element(test_html))
-    
+    summary_box = f"""
+    <div style="
+        background-color: rgba(255,255,255,0.97);
+        border: 1px solid #CFCFCF;
+        border-radius: 10px;
+        padding: 14px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+        font-size: 14px;
+        color: #222;
+        line-height: 1.6;
+        min-width: 270px;
+    ">
+        <b>Target Market Size</b><br><br>
+
+        <b>Total Regional Market</b><br>
+        <span style="font-size:20px; font-weight:700;">{total_market:,}</span><br><br>
+
+        <b>Primary Target ZIPs</b><br>
+        <span style="font-size:18px; font-weight:700; color:#2ca25f;">{primary_total:,}</span><br><br>
+
+        <b>Secondary Target ZIPs</b><br>
+        <span style="font-size:18px; font-weight:700; color:#f1c40f;">{secondary_total:,}</span>
+    </div>
+    """
+    add_leaflet_control(m, summary_box, position="topright")
+
 # ---------------------------------------------------
 # DISPLAY MAP
 # ---------------------------------------------------
@@ -606,10 +671,10 @@ else:
     )
 
     st.write(
-        f"**Means used for cutoffs:** "
+        f"**Cutoff benchmarks:** "
         f"Income = ${income_mean:,.0f}, "
         f"% Bachelor's Degree = {bachelors_mean:.2f}%, "
-        f"Families = {families_mean:,.0f}, "
+        f"Families = {families_mean:,.0f}"
     )
 
     summary_cols = [
@@ -645,8 +710,8 @@ else:
 
     if show_detail_table:
         st.markdown("### Detailed Age / Gender Population Table")
-        detail_cols = ["Zip", "income", "bachelors_pct", "families"]
 
+        detail_cols = ["Zip", "income", "bachelors_pct", "families"]
         for gender in ["female", "male"]:
             for age in AGE_BINS:
                 safe_age = age.replace("+", "_plus").replace("<", "lt_").replace("-", "_")
@@ -660,6 +725,7 @@ else:
         })
 
         st.dataframe(df_detail, use_container_width=True)
+
 
 
 
