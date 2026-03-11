@@ -566,15 +566,17 @@ else:
 m.get_root().html.add_child(folium.Element(legend_html))
 
 if view_mode == "Data-Driven Market Mode":
+
+    total_market = int(
+        df_demo["target_demo_count"].sum()
+    )
+
     primary_total = int(
         df_demo.loc[df_demo["market_class"] == "Primary Target", "target_demo_count"].sum()
     )
 
-    primary_secondary_total = int(
-        df_demo.loc[
-            df_demo["market_class"].isin(["Primary Target", "Secondary Opportunity"]),
-            "target_demo_count"
-        ].sum()
+    secondary_total = int(
+        df_demo.loc[df_demo["market_class"] == "Secondary Opportunity", "target_demo_count"].sum()
     )
 
     summary_html = f"""
@@ -591,15 +593,26 @@ if view_mode == "Data-Driven Market Mode":
         color: #222;
         padding: 12px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-        line-height: 1.5;
+        line-height: 1.6;
     ">
-        <b>Target Market Summary</b><br><br>
-        <b>Primary Target Total:</b><br>
-        {primary_total:,}<br><br>
-        <b>Primary + Secondary Total:</b><br>
-        {primary_secondary_total:,}
+        <b>Target Market Size</b><br><br>
+
+        <b>Total Regional Market</b><br>
+        <span style="font-size:20px;font-weight:700;">{total_market:,}</span><br><br>
+
+        <b>Primary Target ZIPs</b><br>
+        <span style="font-size:18px;font-weight:700;color:#2ca25f;">
+        {primary_total:,}
+        </span><br><br>
+
+        <b>Secondary Target ZIPs</b><br>
+        <span style="font-size:18px;font-weight:700;color:#f1c40f;">
+        {secondary_total:,}
+        </span>
+
     </div>
     """
+
     m.get_root().html.add_child(folium.Element(summary_html))
 # ---------------------------------------------------
 # DISPLAY MAP
@@ -628,7 +641,6 @@ else:
         f"Income = ${income_mean:,.0f}, "
         f"% Bachelor's Degree = {bachelors_mean:.2f}%, "
         f"Families = {families_mean:,.0f}, "
-        f"Target demographic count = {demo_mean:,.0f}"
     )
 
     summary_cols = [
@@ -679,5 +691,6 @@ else:
         })
 
         st.dataframe(df_detail, use_container_width=True)
+
 
 
