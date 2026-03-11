@@ -565,6 +565,42 @@ else:
 
 m.get_root().html.add_child(folium.Element(legend_html))
 
+if view_mode == "Data-Driven Market Mode":
+    primary_total = int(
+        df_demo.loc[df_demo["market_class"] == "Primary Target", "target_demo_count"].sum()
+    )
+
+    primary_secondary_total = int(
+        df_demo.loc[
+            df_demo["market_class"].isin(["Primary Target", "Secondary Opportunity"]),
+            "target_demo_count"
+        ].sum()
+    )
+
+    summary_html = f"""
+    <div style="
+        position: fixed;
+        top: 35px;
+        right: 35px;
+        width: 260px;
+        background-color: rgba(255,255,255,0.95);
+        border: 1px solid #CFCFCF;
+        border-radius: 10px;
+        z-index: 9999;
+        font-size: 14px;
+        color: #222;
+        padding: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        line-height: 1.5;
+    ">
+        <b>Target Market Summary</b><br><br>
+        <b>Primary Target Total:</b><br>
+        {primary_total:,}<br><br>
+        <b>Primary + Secondary Total:</b><br>
+        {primary_secondary_total:,}
+    </div>
+    """
+    m.get_root().html.add_child(folium.Element(summary_html))
 # ---------------------------------------------------
 # DISPLAY MAP
 # ---------------------------------------------------
@@ -643,4 +679,5 @@ else:
         })
 
         st.dataframe(df_detail, use_container_width=True)
+
 
