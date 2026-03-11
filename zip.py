@@ -25,8 +25,11 @@ MAP_STYLES = {
     "Dark Map": "CartoDB dark_matter"
 }
 
-st.title("Cincinnati ZIP Highlight Map")
-st.caption("Choose which ZIP codes to highlight in Hamilton County / Cincinnati.")
+if "highlighted" not in st.session_state:
+    st.session_state.highlighted = DEFAULT_HIGHLIGHTED.copy()
+
+st.title("Cincinnati ZIP Target Market Map")
+st.caption("Choose which ZIP codes are in your target market.")
 
 # -----------------------------
 # SIDEBAR
@@ -39,17 +42,47 @@ map_style_name = st.sidebar.selectbox(
     index=0
 )
 
-highlighted = st.sidebar.multiselect(
-    "Highlighted ZIPs",
-    options=ALL_ZIPS,
-    default=DEFAULT_HIGHLIGHTED
-)
-
-highlight_color = st.sidebar.color_picker("Highlight Color", "#D9EF6B")
+highlight_color = st.sidebar.color_picker("Target Market Color", "#D9EF6B")
 show_labels = st.sidebar.checkbox("Show ZIP labels", value=True)
 
 st.sidebar.markdown("---")
-st.sidebar.metric("Highlighted ZIP count", len(highlighted))
+st.sidebar.subheader("Quick Actions")
+
+col1, col2 = st.sidebar.columns(2)
+if col1.button("Select All"):
+    st.session_state.highlighted = ALL_ZIPS.copy()
+if col2.button("Clear All"):
+    st.session_state.highlighted = []
+
+col3, col4 = st.sidebar.columns(2)
+if col3.button("Reset Default"):
+    st.session_state.highlighted = DEFAULT_HIGHLIGHTED.copy()
+if col4.button("Sort ZIPs"):
+    st.session_state.highlighted = sorted(st.session_state.highlighted)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("Paste ZIPs")
+
+zip_text = st.sidebar.text_area(
+    "Paste comma-separated ZIPs",
+    placeholder="45202, 45208, 45215"
+)
+
+if st.sidebar.button("Apply Pasted ZIPs"):
+    pasted = [z.strip() for z in zip_text.replace("\n", ",").split(",")]
+    pasted = [z for z in pasted if z in ALL_ZIPS]
+    st.session_state.highlighted = pasted
+
+highlighted = st.sidebar.multiselect(
+    "Target Market ZIPs",
+    options=ALL_ZIPS,
+    default=st.session_state.highlighted
+)
+
+st.session_state.highlighted = highlighted
+
+st.sidebar.markdown("---")
+st.sidebar.metric("Target Market ZIP Count", len(highlighted))
 
 if highlighted:
     st.sidebar.write("Selected ZIPs:")
@@ -89,14 +122,14 @@ def style(feature):
         return {
             "fillColor": highlight_color,
             "color": "#111111",
-            "weight": 1.6,
+            "weight": 1.4,
             "fillOpacity": 0.58
         }
     else:
         return {
             "fillColor": "#000000",
-            "color": "#8F8F8F",
-            "weight": 0.9,
+            "color": "#9A9A9A",
+            "weight": 0.8,
             "fillOpacity": 0
         }
 
@@ -106,14 +139,14 @@ def highlight_function(feature):
     if z in highlighted:
         return {
             "color": "#000000",
-            "weight": 2.2,
+            "weight": 2.0,
             "fillOpacity": 0.68
         }
     else:
         return {
-            "color": "#444444",
-            "weight": 1.6,
-            "fillOpacity": 0.08
+            "color": "#555555",
+            "weight": 1.3,
+            "fillOpacity": 0.05
         }
 
 tooltip = None
@@ -134,7 +167,6 @@ geojson_layer = folium.GeoJson(
 )
 geojson_layer.add_to(m)
 
-# Fit map to ZIP bounds
 try:
     bounds = geojson_layer.get_bounds()
     if bounds:
@@ -150,7 +182,7 @@ legend_html = f"""
     position: fixed;
     bottom: 35px;
     left: 35px;
-    width: 220px;
+    width: 240px;
     background-color: rgba(255,255,255,0.92);
     border: 1px solid #CFCFCF;
     border-radius: 10px;
@@ -166,16 +198,16 @@ legend_html = f"""
         width:14px;
         height:14px;
         background:{highlight_color};
-        border:1.5px solid #111111;
+        border:1.4px solid #111111;
         margin-right:8px;
         vertical-align:middle;
-    "></span> Highlighted ZIPs<br><br>
+    "></span> Target Market ZIPs<br><br>
     <span style="
         display:inline-block;
         width:14px;
         height:14px;
         background:transparent;
-        border:1px solid #8F8F8F;
+        border:1px solid #9A9A9A;
         margin-right:8px;
         vertical-align:middle;
     "></span> Other ZIPs
@@ -191,7 +223,7 @@ st_folium(m, width=1400, height=800)
 # -----------------------------
 # BOTTOM SUMMARY
 # -----------------------------
-st.markdown("### Highlighted ZIPs")
+st.markdown("### Target Market ZIPs")
 if highlighted:
     st.write(", ".join(highlighted))
 else:
