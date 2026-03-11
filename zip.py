@@ -565,47 +565,23 @@ else:
 
 m.get_root().html.add_child(folium.Element(legend_html))
 
-if view_mode == "Data-Driven Market Mode":
-    total_market = int(df_demo["target_demo_count"].sum())
-
-    primary_total = int(
-        df_demo.loc[df_demo["market_class"] == "Primary Target", "target_demo_count"].sum()
-    )
-
-    secondary_total = int(
-        df_demo.loc[df_demo["market_class"] == "Secondary Opportunity", "target_demo_count"].sum()
-    )
-
-    summary_html = f"""
-    <div style="
-        position: absolute;
-        top: 70px;
-        right: 10px;
-        width: 290px;
-        background-color: rgba(255,255,255,0.97);
-        border: 1px solid #CFCFCF;
-        border-radius: 10px;
-        z-index: 9999;
-        font-size: 14px;
-        color: #222;
-        padding: 14px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.18);
-        line-height: 1.6;
-        pointer-events: none;
-    ">
-        <b>Target Market Size</b><br><br>
-
-        <b>Total Regional Market</b><br>
-        <span style="font-size:20px; font-weight:700;">{total_market:,}</span><br><br>
-
-        <b>Primary Target ZIPs</b><br>
-        <span style="font-size:18px; font-weight:700; color:#2ca25f;">{primary_total:,}</span><br><br>
-
-        <b>Secondary Target ZIPs</b><br>
-        <span style="font-size:18px; font-weight:700; color:#f1c40f;">{secondary_total:,}</span>
-    </div>
-    """
-    m.get_root().html.add_child(folium.Element(summary_html))
+test_html = """
+<div style="
+    position: absolute;
+    top: 70px;
+    right: 10px;
+    width: 220px;
+    background: red;
+    color: white;
+    z-index: 9999;
+    padding: 14px;
+    font-weight: bold;
+    border-radius: 8px;
+">
+    TEST BOX
+</div>
+"""
+m.get_root().html.add_child(folium.Element(test_html))
     
 # ---------------------------------------------------
 # DISPLAY MAP
@@ -684,6 +660,7 @@ else:
         })
 
         st.dataframe(df_detail, use_container_width=True)
+
 
 
 
