@@ -578,19 +578,20 @@ if view_mode == "Data-Driven Market Mode":
 
     summary_html = f"""
     <div style="
-        position: fixed;
-        top: 20px;
-        right: 20px;
+        position: absolute;
+        top: 70px;
+        right: 10px;
         width: 290px;
         background-color: rgba(255,255,255,0.97);
         border: 1px solid #CFCFCF;
         border-radius: 10px;
-        z-index: 99999;
+        z-index: 9999;
         font-size: 14px;
         color: #222;
         padding: 14px;
         box-shadow: 0 2px 10px rgba(0,0,0,0.18);
         line-height: 1.6;
+        pointer-events: none;
     ">
         <b>Target Market Size</b><br><br>
 
@@ -683,6 +684,7 @@ else:
         })
 
         st.dataframe(df_detail, use_container_width=True)
+
 
 
 
