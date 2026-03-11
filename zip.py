@@ -9,6 +9,8 @@ st.set_page_config(page_title="Cincinnati ZIP Market Map", layout="wide")
 # ---------------------------------------------------
 # CONSTANTS
 # ---------------------------------------------------
+CSV_FILE = "Client project demo data 03-02-26.csv"
+
 ALL_ZIPS = [
     "45202", "45203", "45204", "45205", "45206", "45207", "45208", "45209",
     "45211", "45212", "45213", "45214", "45215", "45216", "45217", "45218",
@@ -68,9 +70,9 @@ def clean_zip(x):
         s = s[:-2]
     return s.zfill(5)
 
-def parse_uploaded_demographics(uploaded_file):
-    df = pd.read_csv(uploaded_file)
-
+@st.cache_data
+def load_demographics(csv_file):
+    df = pd.read_csv(csv_file)
     df.columns = [str(c).strip() for c in df.columns]
 
     required_cols = ["Zip", "Income", "% bachelors degree", "Families", "Gender"]
@@ -78,7 +80,7 @@ def parse_uploaded_demographics(uploaded_file):
         if col not in df.columns:
             raise ValueError(f"Missing required column: {col}")
 
-    # forward-fill repeated ZIP-level fields from your 3-row-per-zip layout
+    # forward fill the 3-row-per-zip structure
     df["Zip"] = df["Zip"].replace("", pd.NA).ffill()
     df["Income"] = df["Income"].replace("", pd.NA).ffill()
     df["% bachelors degree"] = df["% bachelors degree"].replace("", pd.NA).ffill()
@@ -86,7 +88,6 @@ def parse_uploaded_demographics(uploaded_file):
 
     df["Zip"] = df["Zip"].apply(clean_zip)
     df["Gender"] = df["Gender"].astype(str).str.strip().str.title()
-
     df = df[df["Zip"].isin(ALL_ZIPS)].copy()
     df = df[df["Gender"].isin(["Male", "Female", "Total"])].copy()
 
@@ -94,16 +95,17 @@ def parse_uploaded_demographics(uploaded_file):
     df["% bachelors degree"] = df["% bachelors degree"].apply(clean_numeric)
     df["Families"] = df["Families"].apply(clean_numeric)
 
-    numeric_cols = AGE_BINS + [c for c in ["Male", "Female", "Total", "Income-Cutoff", "Education-Cutoff",
-                                           "Families-Cutoff", "Multi-Criteria Cutoff", "Sample per zip"]
-                               if c in df.columns]
-
-    for col in numeric_cols:
+    extra_numeric = [
+        "Male", "Female", "Total",
+        "Income-Cutoff", "Education-Cutoff", "Families-Cutoff",
+        "Multi-Criteria Cutoff", "Sample per zip"
+    ]
+    for col in AGE_BINS + [c for c in extra_numeric if c in df.columns]:
         df[col] = df[col].apply(clean_numeric)
 
-    base_cols = ["Zip", "Income", "% bachelors degree", "Families"]
+    # ZIP-level attributes
     zip_level = (
-        df.groupby("Zip", as_index=False)[base_cols[1:]]
+        df.groupby("Zip", as_index=False)[["Income", "% bachelors degree", "Families"]]
         .max()
         .rename(columns={
             "Income": "income",
@@ -112,7 +114,7 @@ def parse_uploaded_demographics(uploaded_file):
         })
     )
 
-    # Pivot gender-specific age bins
+    # gender x age
     gender_rows = df[df["Gender"].isin(["Male", "Female"])].copy()
     melted = gender_rows.melt(
         id_vars=["Zip", "Gender"],
@@ -120,12 +122,13 @@ def parse_uploaded_demographics(uploaded_file):
         var_name="age_bin",
         value_name="count"
     )
-
     melted["col_name"] = (
-        melted["Gender"].str.lower().str.strip() + "_" +
-        melted["age_bin"].str.replace("+", "_plus", regex=False)
-                         .str.replace("<", "lt_", regex=False)
-                         .str.replace("-", "_", regex=False)
+        melted["Gender"].str.lower()
+        + "_"
+        + melted["age_bin"]
+            .str.replace("+", "_plus", regex=False)
+            .str.replace("<", "lt_", regex=False)
+            .str.replace("-", "_", regex=False)
     )
 
     wide_age = (
@@ -139,38 +142,8 @@ def parse_uploaded_demographics(uploaded_file):
         .reset_index()
     )
 
-    # Optional existing score/sample columns if present
-    optional_cols = {}
-    if "Multi-Criteria Cutoff" in df.columns:
-        optional_cols["Multi-Criteria Cutoff"] = "existing_score"
-    if "Sample per zip" in df.columns:
-        optional_cols["Sample per zip"] = "sample_per_zip"
+    merged = zip_level.merge(wide_age, on="Zip", how="left").fillna(0)
 
-    extras = None
-    if optional_cols:
-        extras = (
-            df.groupby("Zip", as_index=False)[list(optional_cols.keys())]
-            .max()
-            .rename(columns=optional_cols)
-        )
-
-    merged = zip_level.merge(wide_age, on="Zip", how="left")
-    if extras is not None:
-        merged = merged.merge(extras, on="Zip", how="left")
-
-    # Fill missing age cols with 0
-    for gender in ["male", "female"]:
-        for age in AGE_BINS:
-            col = (
-                gender + "_" +
-                age.replace("+", "_plus").replace("<", "lt_").replace("-", "_")
-            )
-            if col not in merged.columns:
-                merged[col] = 0
-
-    merged = merged.fillna(0)
-
-    # derived totals
     male_cols = [c for c in merged.columns if c.startswith("male_")]
     female_cols = [c for c in merged.columns if c.startswith("female_")]
 
@@ -192,14 +165,14 @@ def selected_demo_count(row, selected_age_bins, gender_choice):
 
 def classify_row(row, enabled_criteria):
     met = sum(bool(row[c]) for c in enabled_criteria)
-    max_score = len(enabled_criteria)
+    possible = len(enabled_criteria)
 
-    if max_score == 0:
+    if possible == 0:
         return "Low Fit", 0
 
-    if met == max_score:
+    if met == possible:
         return "Primary Target", met
-    elif met == max_score - 1 and met > 0:
+    elif met == possible - 1 and met > 0:
         return "Secondary Opportunity", met
     elif met > 0:
         return "Partial Fit", met
@@ -210,7 +183,7 @@ def classify_row(row, enabled_criteria):
 # TITLE
 # ---------------------------------------------------
 st.title("Cincinnati ZIP Market Map")
-st.caption("Switch between manual ZIP highlighting and a data-driven demographic target market map.")
+st.caption("Switch between manual ZIP selection and a built-in data-driven target market map.")
 
 # ---------------------------------------------------
 # SIDEBAR
@@ -230,9 +203,6 @@ map_style_name = st.sidebar.selectbox(
 )
 
 show_labels = st.sidebar.checkbox("Show ZIP labels", value=True)
-
-uploaded_file = None
-df_demo = None
 
 if view_mode == "Manual Highlight Mode":
     st.sidebar.subheader("Manual ZIP Selection")
@@ -270,68 +240,49 @@ if view_mode == "Manual Highlight Mode":
     st.sidebar.metric("Selected ZIP count", len(manual_selected))
 
 else:
-    st.sidebar.subheader("Demographic Data")
-    uploaded_file = st.sidebar.file_uploader(
-        "Upload demographic CSV exported from Excel",
-        type=["csv"]
+    st.sidebar.subheader("Data-Driven Targeting")
+
+    gender_choice = st.sidebar.radio(
+        "Gender",
+        ["Female", "Male", "Both"],
+        index=0
     )
 
-    if uploaded_file is not None:
-        try:
-            df_demo = parse_uploaded_demographics(uploaded_file)
-        except Exception as e:
-            st.error(f"Could not parse CSV: {e}")
-            st.stop()
+    selected_age_bins = st.sidebar.multiselect(
+        "Age Ranges",
+        options=AGE_BINS,
+        default=["25-29", "30-34", "35-39", "40-44"]
+    )
 
-        st.sidebar.subheader("Target Market Definition")
+    st.sidebar.subheader("Cutoff Rules")
 
-        gender_choice = st.sidebar.radio(
-            "Gender",
-            ["Female", "Male", "Both"],
-            index=0
-        )
+    use_demographic = st.sidebar.checkbox("Require target demographic above overall mean", value=True)
+    use_families = st.sidebar.checkbox("Require families above overall mean", value=True)
+    use_income = st.sidebar.checkbox("Use income above overall mean", value=True)
+    use_education = st.sidebar.checkbox("Use education above overall mean", value=True)
 
-        selected_age_bins = st.sidebar.multiselect(
-            "Age Ranges",
-            options=AGE_BINS,
-            default=["25-29", "30-34", "35-39", "40-44"]
-        )
+    income_education_logic = st.sidebar.radio(
+        "Income / Education Rule",
+        ["Either income OR education", "Both income AND education"],
+        index=0
+    )
 
-        st.sidebar.subheader("Criteria Relative to Mean")
-
-        use_demographic = st.sidebar.checkbox("Require target demographic count above overall mean", value=True)
-        use_families = st.sidebar.checkbox("Require families above overall mean", value=True)
-        use_income = st.sidebar.checkbox("Use income above overall mean", value=True)
-        use_education = st.sidebar.checkbox("Use education above overall mean", value=True)
-
-        income_education_logic = st.sidebar.radio(
-            "Income / Education Rule",
-            ["Either income OR education", "Both income AND education"],
-            index=0
-        )
-
-        show_low_fit = st.sidebar.checkbox("Show low-fit ZIPs", value=True)
-        show_ranked_table = st.sidebar.checkbox("Show ranked summary table", value=True)
-        show_detail_table = st.sidebar.checkbox("Show detailed age/gender table", value=False)
-    else:
-        st.sidebar.info("Upload your CSV to use data-driven mode.")
+    show_low_fit = st.sidebar.checkbox("Show low-fit ZIPs", value=True)
+    show_ranked_table = st.sidebar.checkbox("Show ranked summary table", value=True)
+    show_detail_table = st.sidebar.checkbox("Show detailed age/gender table", value=False)
 
 # ---------------------------------------------------
-# LOAD GEOJSON
+# LOAD DEMOGRAPHICS
 # ---------------------------------------------------
-URL = "https://raw.githubusercontent.com/OpenDataDE/State-zip-code-GeoJSON/master/oh_ohio_zip_codes_geo.min.json"
-geo = requests.get(URL, timeout=30).json()
+try:
+    df_demo = load_demographics(CSV_FILE)
+except Exception as e:
+    st.error(f"Could not load {CSV_FILE}: {e}")
+    st.stop()
 
-# ---------------------------------------------------
-# PREP DATA-DRIVEN ZIP DATA
-# ---------------------------------------------------
 zip_lookup = {}
 
 if view_mode == "Data-Driven Market Mode":
-    if df_demo is None:
-        st.info("Upload your demographic CSV in the sidebar to use Data-Driven Market Mode.")
-        st.stop()
-
     if not selected_age_bins:
         st.warning("Choose at least one age range.")
         st.stop()
@@ -351,14 +302,18 @@ if view_mode == "Data-Driven Market Mode":
     df_demo["families_above_mean"] = df_demo["families"] > families_mean
     df_demo["demo_above_mean"] = df_demo["target_demo_count"] > demo_mean
 
-    if income_education_logic == "Either income OR education":
-        df_demo["income_education_rule"] = (
-            df_demo["income_above_mean"] | df_demo["education_above_mean"]
-        )
+    if use_income or use_education:
+        if income_education_logic == "Either income OR education":
+            df_demo["income_education_rule"] = (
+                (df_demo["income_above_mean"] if use_income else False) |
+                (df_demo["education_above_mean"] if use_education else False)
+            )
+        else:
+            income_part = df_demo["income_above_mean"] if use_income else True
+            education_part = df_demo["education_above_mean"] if use_education else True
+            df_demo["income_education_rule"] = income_part & education_part
     else:
-        df_demo["income_education_rule"] = (
-            df_demo["income_above_mean"] & df_demo["education_above_mean"]
-        )
+        df_demo["income_education_rule"] = False
 
     enabled_criteria = []
     if use_demographic:
@@ -376,8 +331,11 @@ if view_mode == "Data-Driven Market Mode":
     zip_lookup = df_demo.set_index("Zip").to_dict(orient="index")
 
 # ---------------------------------------------------
-# BUILD MAP FEATURES
+# LOAD GEOJSON
 # ---------------------------------------------------
+URL = "https://raw.githubusercontent.com/OpenDataDE/State-zip-code-GeoJSON/master/oh_ohio_zip_codes_geo.min.json"
+geo = requests.get(URL, timeout=30).json()
+
 features = []
 for f in geo["features"]:
     zip_code = f["properties"]["ZCTA5CE10"]
@@ -386,23 +344,12 @@ for f in geo["features"]:
 
         if view_mode == "Data-Driven Market Mode" and zip_code in zip_lookup:
             row = zip_lookup[zip_code]
-
             f["properties"]["income_fmt"] = f"${row['income']:,.0f}"
             f["properties"]["bachelors_fmt"] = f"{row['bachelors_pct']:.2f}%"
             f["properties"]["families_fmt"] = f"{row['families']:,.0f}"
             f["properties"]["target_demo_fmt"] = f"{row['target_demo_count']:,.0f}"
             f["properties"]["class_label"] = row["market_class"]
             f["properties"]["met_score_fmt"] = f"{int(row['met_count'])} / {int(row['criteria_possible'])}"
-
-            # selected gender totals
-            if gender_choice == "Female":
-                selected_gender_total = row["female_total_calc"]
-            elif gender_choice == "Male":
-                selected_gender_total = row["male_total_calc"]
-            else:
-                selected_gender_total = row["total_pop_calc"]
-
-            f["properties"]["gender_total_fmt"] = f"{selected_gender_total:,.0f}"
             f["properties"]["female_total_fmt"] = f"{row['female_total_calc']:,.0f}"
             f["properties"]["male_total_fmt"] = f"{row['male_total_calc']:,.0f}"
 
@@ -454,22 +401,12 @@ def data_style(feature):
     row = zip_lookup.get(z)
 
     if row is None:
-        return {
-            "fillColor": "#000000",
-            "color": "#BBBBBB",
-            "weight": 0.7,
-            "fillOpacity": 0
-        }
+        return {"fillColor": "#000000", "color": "#BBBBBB", "weight": 0.7, "fillOpacity": 0}
 
     market_class = row["market_class"]
 
     if market_class == "Low Fit" and not show_low_fit:
-        return {
-            "fillColor": "#000000",
-            "color": "#CFCFCF",
-            "weight": 0.6,
-            "fillOpacity": 0
-        }
+        return {"fillColor": "#000000", "color": "#CFCFCF", "weight": 0.6, "fillOpacity": 0}
 
     fill_color = CLASS_COLORS[market_class]
 
@@ -634,7 +571,7 @@ m.get_root().html.add_child(folium.Element(legend_html))
 st_folium(m, width=1400, height=800)
 
 # ---------------------------------------------------
-# OUTPUT TABLES
+# BOTTOM OUTPUT
 # ---------------------------------------------------
 if view_mode == "Manual Highlight Mode":
     st.markdown("### Target Market ZIPs")
@@ -642,7 +579,6 @@ if view_mode == "Manual Highlight Mode":
         st.write(", ".join(st.session_state.manual_selected))
     else:
         st.write("No ZIPs selected.")
-
 else:
     st.markdown("### Data-Driven Summary")
 
@@ -666,8 +602,7 @@ else:
         "met_count", "criteria_possible"
     ]
 
-    df_summary = df_demo[summary_cols].copy()
-    df_summary = df_summary.rename(columns={
+    df_summary = df_demo[summary_cols].copy().rename(columns={
         "Zip": "ZIP",
         "market_class": "Market Class",
         "target_demo_count": "Target Demographic Count",
@@ -693,7 +628,6 @@ else:
 
     if show_detail_table:
         st.markdown("### Detailed Age / Gender Population Table")
-
         detail_cols = ["Zip", "income", "bachelors_pct", "families"]
 
         for gender in ["female", "male"]:
@@ -701,11 +635,12 @@ else:
                 safe_age = age.replace("+", "_plus").replace("<", "lt_").replace("-", "_")
                 detail_cols.append(f"{gender}_{safe_age}")
 
-        df_detail = df_demo[detail_cols].copy()
-        df_detail = df_detail.rename(columns={
+        df_detail = df_demo[detail_cols].copy().rename(columns={
             "Zip": "ZIP",
             "income": "Income",
             "bachelors_pct": "% Bachelor's Degree",
             "families": "Families"
         })
+
         st.dataframe(df_detail, use_container_width=True)
+
