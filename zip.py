@@ -27,16 +27,14 @@ highlighted = st.sidebar.multiselect(
     default=DEFAULT_HIGHLIGHTED
 )
 
-highlight_color = st.sidebar.color_picker("Highlight Color", "#00E5FF")
+highlight_color = st.sidebar.color_picker("Highlight Color", "#D9EF6B")
 
 st.title("Cincinnati ZIP Highlight Map")
 
-# Load ZIP boundaries from public dataset
 URL = "https://raw.githubusercontent.com/OpenDataDE/State-zip-code-GeoJSON/master/oh_ohio_zip_codes_geo.min.json"
 geo = requests.get(URL).json()
 
 features = []
-
 for f in geo["features"]:
     zip_code = f["properties"]["ZCTA5CE10"]
     if zip_code in ALL_ZIPS:
@@ -60,24 +58,32 @@ def style(feature):
     if z in highlighted:
         return {
             "fillColor": highlight_color,
-            "color": "white",
-            "weight": 2,
-            "fillOpacity": 0.7
+            "color": "#000000",
+            "weight": 2.5,
+            "fillOpacity": 0.6
         }
     else:
         return {
             "fillColor": "#000000",
-            "color": "#666666",
+            "color": "#8A8A8A",
             "weight": 1,
             "fillOpacity": 0
         }
 
+highlight_function = lambda feature: {
+    "color": "#000000",
+    "weight": 3,
+    "fillOpacity": 0.75
+}
+
 folium.GeoJson(
     filtered_geo,
     style_function=style,
+    highlight_function=highlight_function,
     tooltip=folium.GeoJsonTooltip(
         fields=["ZIP_DISPLAY"],
-        aliases=["ZIP:"]
+        aliases=["ZIP:"],
+        sticky=False
     )
 ).add_to(m)
 
