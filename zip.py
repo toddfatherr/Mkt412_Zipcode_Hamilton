@@ -162,23 +162,30 @@ def selected_demo_count(row, selected_age_bins, gender_choice):
             total += row.get(f"male_{safe_age}", 0)
     return total
 
-def classify_row(row, enabled_criteria):
-    met = sum(bool(row[c]) for c in enabled_criteria)
-    possible = len(enabled_criteria)
+def score_market(row):
+    fam = bool(row["families_above_mean"])
+    inc = bool(row["income_above_mean"])
+    edu = bool(row["education_above_mean"])
 
-    if possible == 0:
-        return "Low Fit", 0
+    # 3 = families AND (income OR education)
+    if fam and (inc or edu):
+        return 3, "Primary Target"
 
-    if met == possible:
-        return "Primary Target", met
-    elif met == possible - 1 and met > 0:
-        return "Secondary Opportunity", met
-    elif met > 0:
-        return "Partial Fit", met
-    else:
-        return "Low Fit", met
+    # 2 = income AND education, but NOT families
+    if (not fam) and inc and edu:
+        return 2, "Secondary Opportunity"
 
-def add_leaflet_control(map_obj, html_content, position="topright"):
+    # 1 = family only
+    # 1 = income only
+    # 1 = education only
+    # 1 = family + nothing else
+    if fam or inc or edu:
+        return 1, "Partial Fit"
+
+    # 0 = none
+    return 0, "Low Fit"
+
+def add_leaflet_control(map_obj, html_content, position="bottomleft"):
     template = f"""
     {{% macro script(this, kwargs) %}}
     var control = L.control({{position: '{position}'}});
@@ -274,19 +281,6 @@ else:
         default=["25-29", "30-34", "35-39", "40-44"]
     )
 
-    st.sidebar.subheader("Cutoff Rules")
-
-    use_demographic = st.sidebar.checkbox("Require target demographic above overall mean", value=True)
-    use_families = st.sidebar.checkbox("Require families above overall mean", value=True)
-    use_income = st.sidebar.checkbox("Use income above overall mean", value=True)
-    use_education = st.sidebar.checkbox("Use education above overall mean", value=True)
-
-    income_education_logic = st.sidebar.radio(
-        "Income / Education Rule",
-        ["Either income OR education", "Both income AND education"],
-        index=0
-    )
-
     show_low_fit = st.sidebar.checkbox("Show low-fit ZIPs", value=True)
     show_ranked_table = st.sidebar.checkbox("Show ranked summary table", value=True)
     show_detail_table = st.sidebar.checkbox("Show detailed age/gender table", value=False)
@@ -315,40 +309,36 @@ if view_mode == "Data-Driven Market Mode":
     income_mean = df_demo["income"].mean()
     bachelors_mean = df_demo["bachelors_pct"].mean()
     families_mean = df_demo["families"].mean()
-    demo_mean = df_demo["target_demo_count"].mean()
 
     df_demo["income_above_mean"] = df_demo["income"] > income_mean
     df_demo["education_above_mean"] = df_demo["bachelors_pct"] > bachelors_mean
     df_demo["families_above_mean"] = df_demo["families"] > families_mean
-    df_demo["demo_above_mean"] = df_demo["target_demo_count"] > demo_mean
 
-    if use_income or use_education:
-        if income_education_logic == "Either income OR education":
-            df_demo["income_education_rule"] = (
-                (df_demo["income_above_mean"] if use_income else False) |
-                (df_demo["education_above_mean"] if use_education else False)
-            )
-        else:
-            income_part = df_demo["income_above_mean"] if use_income else True
-            education_part = df_demo["education_above_mean"] if use_education else True
-            df_demo["income_education_rule"] = income_part & education_part
-    else:
-        df_demo["income_education_rule"] = False
-
-    enabled_criteria = []
-    if use_demographic:
-        enabled_criteria.append("demo_above_mean")
-    if use_families:
-        enabled_criteria.append("families_above_mean")
-    if use_income or use_education:
-        enabled_criteria.append("income_education_rule")
-
-    class_results = df_demo.apply(lambda r: classify_row(r, enabled_criteria), axis=1)
-    df_demo["market_class"] = [x[0] for x in class_results]
-    df_demo["met_count"] = [x[1] for x in class_results]
-    df_demo["criteria_possible"] = len(enabled_criteria)
+    score_results = df_demo.apply(score_market, axis=1)
+    df_demo["market_score"] = [x[0] for x in score_results]
+    df_demo["market_class"] = [x[1] for x in score_results]
 
     zip_lookup = df_demo.set_index("Zip").to_dict(orient="index")
+
+    total_market = int(df_demo["target_demo_count"].sum())
+    primary_total = int(
+        df_demo.loc[df_demo["market_class"] == "Primary Target", "target_demo_count"].sum()
+    )
+    secondary_total = int(
+        df_demo.loc[df_demo["market_class"] == "Secondary Opportunity", "target_demo_count"].sum()
+    )
+else:
+    total_market = primary_total = secondary_total = None
+
+# ---------------------------------------------------
+# PAGE SUMMARY ABOVE MAP
+# ---------------------------------------------------
+if view_mode == "Data-Driven Market Mode":
+    st.markdown("### Target Market Size")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Regional Market", f"{total_market:,}")
+    c2.metric("Primary Target ZIPs", f"{primary_total:,}")
+    c3.metric("Secondary Target ZIPs", f"{secondary_total:,}")
 
 # ---------------------------------------------------
 # LOAD GEOJSON
@@ -369,9 +359,12 @@ for f in geo["features"]:
             f["properties"]["families_fmt"] = f"{row['families']:,.0f}"
             f["properties"]["target_demo_fmt"] = f"{row['target_demo_count']:,.0f}"
             f["properties"]["class_label"] = row["market_class"]
-            f["properties"]["met_score_fmt"] = f"{int(row['met_count'])} / {int(row['criteria_possible'])}"
+            f["properties"]["score_fmt"] = f"{int(row['market_score'])}"
             f["properties"]["female_total_fmt"] = f"{row['female_total_calc']:,.0f}"
             f["properties"]["male_total_fmt"] = f"{row['male_total_calc']:,.0f}"
+            f["properties"]["income_above_fmt"] = "Yes" if row["income_above_mean"] else "No"
+            f["properties"]["education_above_fmt"] = "Yes" if row["education_above_mean"] else "No"
+            f["properties"]["families_above_fmt"] = "Yes" if row["families_above_mean"] else "No"
 
         features.append(f)
 
@@ -412,9 +405,9 @@ def manual_highlight(feature):
         }
     return {
         "color": "#555555",
-            "weight": 1.2,
-            "fillOpacity": 0.05
-        }
+        "weight": 1.2,
+        "fillOpacity": 0.05
+    }
 
 def data_style(feature):
     z = feature["properties"]["ZIP_DISPLAY"]
@@ -476,22 +469,28 @@ else:
         fields=[
             "ZIP_DISPLAY",
             "class_label",
-            "met_score_fmt",
+            "score_fmt",
             "target_demo_fmt",
             "income_fmt",
             "bachelors_fmt",
             "families_fmt",
+            "families_above_fmt",
+            "income_above_fmt",
+            "education_above_fmt",
             "female_total_fmt",
             "male_total_fmt"
         ],
         aliases=[
             "ZIP:",
             "Market class:",
-            "Criteria met:",
+            "Score:",
             "Target demographic count:",
             "Income:",
             "% Bachelor's Degree:",
             "Families:",
+            "Families above mean:",
+            "Income above mean:",
+            "Education above mean:",
             "Female total:",
             "Male total:"
         ],
@@ -518,7 +517,7 @@ except Exception:
     pass
 
 # ---------------------------------------------------
-# LEGEND / MAP BOXES
+# LEGEND
 # ---------------------------------------------------
 if view_mode == "Manual Highlight Mode":
     legend_box = f"""
@@ -614,40 +613,6 @@ else:
     """
     add_leaflet_control(m, legend_box, position="bottomleft")
 
-    total_market = int(df_demo["target_demo_count"].sum())
-    primary_total = int(
-        df_demo.loc[df_demo["market_class"] == "Primary Target", "target_demo_count"].sum()
-    )
-    secondary_total = int(
-        df_demo.loc[df_demo["market_class"] == "Secondary Opportunity", "target_demo_count"].sum()
-    )
-
-    summary_box = f"""
-    <div style="
-        background-color: rgba(255,255,255,0.97);
-        border: 1px solid #CFCFCF;
-        border-radius: 10px;
-        padding: 14px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.18);
-        font-size: 14px;
-        color: #222;
-        line-height: 1.6;
-        min-width: 270px;
-    ">
-        <b>Target Market Size</b><br><br>
-
-        <b>Total Regional Market</b><br>
-        <span style="font-size:20px; font-weight:700;">{total_market:,}</span><br><br>
-
-        <b>Primary Target ZIPs</b><br>
-        <span style="font-size:18px; font-weight:700; color:#2ca25f;">{primary_total:,}</span><br><br>
-
-        <b>Secondary Target ZIPs</b><br>
-        <span style="font-size:18px; font-weight:700; color:#f1c40f;">{secondary_total:,}</span>
-    </div>
-    """
-    add_leaflet_control(m, summary_box, position="topright")
-
 # ---------------------------------------------------
 # DISPLAY MAP
 # ---------------------------------------------------
@@ -671,37 +636,41 @@ else:
     )
 
     st.write(
-        f"**Cutoff benchmarks:** "
-        f"Income = ${income_mean:,.0f}, "
-        f"% Bachelor's Degree = {bachelors_mean:.2f}%, "
-        f"Families = {families_mean:,.0f}"
+        f"**Benchmarks used:** "
+        f"Income mean = ${income_mean:,.0f}, "
+        f"% Bachelor's Degree mean = {bachelors_mean:.2f}%, "
+        f"Families mean = {families_mean:,.0f}"
+    )
+
+    st.write(
+        "**Scoring logic:** "
+        "3 = families above mean and income or education above mean; "
+        "2 = income and education above mean but not families; "
+        "1 = family only or income only or education only; "
+        "0 = none."
     )
 
     summary_cols = [
-        "Zip", "market_class", "target_demo_count", "income", "bachelors_pct",
-        "families", "demo_above_mean", "families_above_mean",
-        "income_above_mean", "education_above_mean", "income_education_rule",
-        "met_count", "criteria_possible"
+        "Zip", "market_class", "market_score", "target_demo_count", "income",
+        "bachelors_pct", "families", "families_above_mean",
+        "income_above_mean", "education_above_mean"
     ]
 
     df_summary = df_demo[summary_cols].copy().rename(columns={
         "Zip": "ZIP",
         "market_class": "Market Class",
+        "market_score": "Score",
         "target_demo_count": "Target Demographic Count",
         "income": "Income",
         "bachelors_pct": "% Bachelor's Degree",
         "families": "Families",
-        "demo_above_mean": "Demo Above Mean",
         "families_above_mean": "Families Above Mean",
         "income_above_mean": "Income Above Mean",
-        "education_above_mean": "Education Above Mean",
-        "income_education_rule": "Income/Education Rule Met",
-        "met_count": "Criteria Met",
-        "criteria_possible": "Criteria Possible"
+        "education_above_mean": "Education Above Mean"
     })
 
     df_summary = df_summary.sort_values(
-        by=["Criteria Met", "Target Demographic Count", "Income"],
+        by=["Score", "Target Demographic Count", "Income"],
         ascending=[False, False, False]
     ).reset_index(drop=True)
 
@@ -725,10 +694,5 @@ else:
         })
 
         st.dataframe(df_detail, use_container_width=True)
-
-
-
-
-
 
 
